@@ -1,8 +1,8 @@
 # Off-Axis-Projection-demo
 
-1.look my tuto to import all library : https://www.instagram.com/p/DRpOU6JCOz0/ 
+1.Important to look my tuto: https://www.instagram.com/p/DRpOU6JCOz0/ 
 
-2.Open the demo file
+2.Instal library and run main file
 
 3.Enjoy
 
