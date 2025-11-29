@@ -33,7 +33,6 @@ def project(x, y, z, hx, hy, WIDTH, HEIGHT):
 def main():
     pygame.init()
     
-    # Centrage de la fenêtre Pygame
     import os
     os.environ['SDL_VIDEO_WINDOW_POS'] = "%d,%d" % (
         (pygame.display.Info().current_w - WIN_WIDTH) // 2,
