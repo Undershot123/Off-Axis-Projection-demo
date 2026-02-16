@@ -21,6 +21,10 @@ SMOOTHING = 0.2
 ROOM_DEPTH = 25.0
 MIN_DEPTH = 5.0
 MAX_DEPTH = 80.0
+SLIDER_WIDTH = 400
+SLIDER_HEIGHT = 8
+SLIDER_Y_OFFSET = 40  # distance from bottom
+KNOB_RADIUS = 10
 MODEL_PATH = "face_landmarker.task"
 
 # =================================================================
@@ -201,6 +205,39 @@ def edge_under_mouse(mx, my, corners, threshold=10):
 
     return None
 
+def draw_slider(surface, depth):
+    slider_x = WIDTH // 2 - SLIDER_WIDTH // 2
+    slider_y = HEIGHT - SLIDER_Y_OFFSET
+
+    # Normalize depth to 0–1
+    t = (depth - MIN_DEPTH) / (MAX_DEPTH - MIN_DEPTH)
+    t = max(0.0, min(1.0, t))
+
+    knob_x = slider_x + int(t * SLIDER_WIDTH)
+    knob_y = slider_y
+
+    # Draw track
+    pygame.draw.rect(surface, (80, 80, 80),
+                     (slider_x, slider_y - SLIDER_HEIGHT//2,
+                      SLIDER_WIDTH, SLIDER_HEIGHT))
+
+    # Draw filled portion
+    pygame.draw.rect(surface, (0, 180, 255),
+                     (slider_x, slider_y - SLIDER_HEIGHT//2,
+                      int(t * SLIDER_WIDTH), SLIDER_HEIGHT))
+
+    # Draw knob
+    pygame.draw.circle(surface, (255, 255, 255),
+                       (knob_x, knob_y), KNOB_RADIUS)
+
+    return slider_x, slider_y, knob_x, knob_y
+
+
+def slider_hit_test(mx, my, knob_x, knob_y):
+    dx = mx - knob_x
+    dy = my - knob_y
+    return dx*dx + dy*dy <= KNOB_RADIUS * KNOB_RADIUS
+
 
 # =================================================================
 # 4. MAIN LOOP
@@ -212,6 +249,7 @@ def main():
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("Consolas", 24)
     dragging = False
+    dragging_slider = False
     last_mouse_y = 0
 
     room_depth = ROOM_DEPTH
@@ -234,68 +272,23 @@ def main():
             if event.type == pygame.KEYDOWN and event.key == pygame.K_e:
                 running = False
 
-            # --- Mouse hover detection ---
             mx, my = pygame.mouse.get_pos()
-            corners = get_front_square(smooth_hx, smooth_hy)
-            hovered_edge = edge_under_mouse(mx, my, corners)
 
-            if hovered_edge is not None:
-                pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_SIZEALL)
-            else:
-                pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
+            # Draw slider once to get knob position
+            slider_x, slider_y, knob_x, knob_y = draw_slider(screen, room_depth)
 
-            # --- Mouse press ---
             if event.type == pygame.MOUSEBUTTONDOWN:
-                if hovered_edge is not None:
-                    dragging = True
-                    last_mouse_y = my
+                if slider_hit_test(mx, my, knob_x, knob_y):
+                    dragging_slider = True
 
-            # --- Mouse release ---
             if event.type == pygame.MOUSEBUTTONUP:
-                dragging = False
+                dragging_slider = False
 
-            # --- Drag motion ---
-            if event.type == pygame.MOUSEMOTION and dragging:
-                dy = event.rel[1]  # Use relative movement instead of recalculating
-                room_depth -= dy * 0.25
-                room_depth = max(MIN_DEPTH, min(MAX_DEPTH, room_depth))
-
-
-            # Mouse Handling
-            mx, my = pygame.mouse.get_pos()
-            corners = get_front_square(smooth_hx, smooth_hy)
-
-            hovered_edge = edge_under_mouse(mx, my, corners)
-
-            # Cursor change
-            if hovered_edge is not None:
-                pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_SIZEALL)
-            else:
-                pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
-
-            for event in pygame.event.get():
-
-                if event.type == pygame.QUIT:
-                    running = False
-
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_e:
-                    running = False
-
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    if hovered_edge is not None:
-                        dragging = True
-                        last_mouse_y = my
-
-                if event.type == pygame.MOUSEBUTTONUP:
-                    dragging = False
-
-                if event.type == pygame.MOUSEMOTION and dragging:
-                    dy = my - last_mouse_y
-                    last_mouse_y = my
-
-                    room_depth -= dy * 0.25
-                    room_depth = max(MIN_DEPTH, min(MAX_DEPTH, room_depth))
-
+            if event.type == pygame.MOUSEMOTION and dragging_slider:
+                # Convert mouse x into depth
+                t = (mx - slider_x) / SLIDER_WIDTH
+                t = max(0.0, min(1.0, t))
+                room_depth = MIN_DEPTH + t * (MAX_DEPTH - MIN_DEPTH)
 
         # Read tracking
         target_hx = tracker.head_x * SENSITIVITY
@@ -329,6 +322,9 @@ def main():
         if not tracker.detected:
             text = font.render("NOT DETECTED. Check camera.", True, (255, 50, 50))
             screen.blit(text, (WIDTH//2 - text.get_width()//2, HEIGHT - 50))
+
+
+        draw_slider(screen, room_depth)
 
         pygame.display.flip()
 
