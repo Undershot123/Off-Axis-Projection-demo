@@ -14,8 +14,12 @@ WIDTH, HEIGHT = 1000, 700
 COLOR_BG = (10, 10, 20)
 NEON_BLUE = (0, 150, 255)
 
-EYE_DEPTH = 10.0
 UNIT_SCALE = 100
+
+# Vertical FOV control
+VERTICAL_FOV = 60.0
+MIN_FOV = 30.0
+MAX_FOV = 120.0
 
 FPS = 60
 SENSITIVITY = 8
@@ -109,18 +113,21 @@ class Point3D:
         self.x, self.y, self.z = x, y, z
 
 
-def project_off_axis(p, head_x, head_y):
-    total_depth = EYE_DEPTH + p.z
-    if total_depth <= 0.1:
+def project_off_axis(p, head_x, head_y, fov):
+    # Convert FOV to focal length
+    f = (HEIGHT / 2) / np.tan(np.radians(fov / 2))
+
+    total_depth = p.z + 0.0001
+    if total_depth <= 0:
         return None
 
-    ratio = EYE_DEPTH / total_depth
+    ratio = f / total_depth
 
-    screen_x_virtual = head_x + (p.x - head_x) * ratio
-    screen_y_virtual = head_y + (p.y - head_y) * ratio
+    screen_x_virtual = (p.x - head_x) * ratio
+    screen_y_virtual = (p.y - head_y) * ratio
 
-    pixel_x = int(WIDTH / 2 + screen_x_virtual * UNIT_SCALE)
-    pixel_y = int(HEIGHT / 2 + screen_y_virtual * UNIT_SCALE)
+    pixel_x = int(WIDTH / 2 + screen_x_virtual)
+    pixel_y = int(HEIGHT / 2 + screen_y_virtual)
 
     return (pixel_x, pixel_y)
 
