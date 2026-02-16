@@ -1,6 +1,9 @@
 import pygame
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mpTasks
+from mediapipe.tasks.python.vision import FaceLandmarker
+from mediapipe.tasks.python import vision
 import numpy as np
 import math
 import threading
@@ -56,13 +59,27 @@ def draw_intense_neon_line(surface, p1, p2, color, thickness=2):
 # =======================================================================================
 # 3. TRACKING ENGINE
 # =======================================================================================
+''' Old HeadTracking Code, not adapted with current version
 class HeadTracking:
     def __init__(self):
-        self.cap = cv2.VideoCapture(0) # Change to 1, 2, etc. if camera 0 fails
-        self.mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.6, min_tracking_confidence=0.6
+        self.cap = cv2.VideoCapture(2) # Change to 1, 2, etc. if camera 0 fails
+        
+        # Replacing mp.solutions with mp.tasks
+        base_options = mpTasks.BaseOptions(model_asset_path="face_landmarker.task")
+
+        options = vision.FaceLandmarkerOptions(
+            base_options = base_options,
+            running_mode = vision.RunningMode.VIDEO,
+            num_faces = 1
         )
+
+        face_mesh = vision.FaceLandmarker.create_from_options(options)
+
+        #self.mp_face_mesh = mp.solutions.face_mesh
+        #self.face_mesh = self.mp_face_mesh.FaceMesh(
+        #    max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.6, min_tracking_confidence=0.6)
+        #
+        self.mp_face_mesh = face_mesh
         self.head_x, self.head_y = 0, 0
         self.detected = False
         self.hud_surface = None
@@ -114,6 +131,92 @@ class HeadTracking:
     def stop(self):
         self.running = False
         self.cap.release()
+'''
+class HeadTracking:
+    def __init__(self):
+
+        self.cap = cv2.VideoCapture(0)
+
+        if not self.cap.isOpened():
+            print("Camera failed to open")
+
+        base_options = mpTasks.BaseOptions(
+            model_asset_path="face_landmarker.task"
+        )
+
+        options = vision.FaceLandmarkerOptions(
+            base_options=base_options,
+            running_mode=vision.RunningMode.VIDEO,
+            num_faces=1
+        )
+
+        self.face_landmarker = vision.FaceLandmarker.create_from_options(options)
+
+        self.timestamp = 0
+
+        self.head_x = 0
+        self.head_y = 0
+        self.detected = False
+        self.hud_surface = None
+        self.running = True
+
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def _loop(self):
+        
+        while self.running:
+
+            success, frame = self.cap.read()
+            if not success:
+                continue
+            
+            frame = cv2.flip(frame, 1)
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            mp_image = mp.Image(
+                image_format=mp.ImageFormat.SRGB,
+                data=rgb
+            )
+
+            result = self.face_landmarker.detect_for_video(
+                mp_image,
+                self.timestamp
+            )
+
+            self.timestamp += 1
+
+            hud_frame = cv2.applyColorMap(frame, cv2.COLORMAP_WINTER)
+
+            if result.face_landmarks:
+                self.detected = True
+                mesh = result.face_landmarks[0]
+                pt = mesh[168]
+
+                self.head_x = (pt.x - 0.5) * 2
+                self.head_y = (pt.y - 0.5) * 2
+
+                #Draw simple dots instead of old FACEMESH_TESSELATION
+                for lm in mesh:
+                    px = int(lm.x * frame.shape[1])
+                    py = int(lm.y * frame.shape[0])
+                    cv2.circle(hud_frame, (px, py), 1, (0, 255, 255), -1)
+
+            else:
+                self.detected = False
+                cv2.putText(hud_frame, "NO SIGNAL", (10, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                
+            hud_frame = cv2.resize(hud_frame, (320, 240))
+            hud_frame = np.rot90(hud_frame)
+            hud_frame = cv2.cvtColor(hud_frame, cv2.COLOR_BGR2RGB)
+
+            self.hud_surface = pygame.surfarray.make_surface(hud_frame)
+
+def stop(self):
+    self.running = False
+    self.cap.release()
 
 # =======================================================================================
 # 4. 3D ENGINE (OFF-AXIS PROJECTION)

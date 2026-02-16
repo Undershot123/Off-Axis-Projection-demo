@@ -65,10 +65,10 @@ def main():
     base_options = mptest.BaseOptions(model_asset_path="face_landmarker.task")
 
     options = vision.FaceLandmarkerOptions(
-    base_options=base_options,
-    running_mode=vision.RunningMode.VIDEO,
-    num_faces=1
-)
+        base_options=base_options,
+        running_mode=vision.RunningMode.VIDEO,
+        num_faces=1
+    )
 
     face_mesh = vision.FaceLandmarker.create_from_options(options)
 
