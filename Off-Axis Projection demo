@@ -1,25 +1,44 @@
 import pygame
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mptest 
+from mediapipe.tasks.python.vision import FaceLandmarker
+from mediapipe.tasks.python import vision
+import numpy as npSet
+import threading
+import time
+
+
 
 SCALE = 120
 EYE_DIST = 8.0
 WIN_WIDTH = 800
 WIN_HEIGHT = 600
 
-mp_face = mp.solutions.face_mesh
+mp_face = vision.FaceLandmarker
 
-def get_head(cap, face_mesh):
+def get_head(cap, landmarker, timestamp):
     ok, frame = cap.read()
     if not ok:
         return 0, 0, False
+
     frame = cv2.flip(frame, 1)
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    res = face_mesh.process(rgb)
-    if not res.multi_face_landmarks:
+
+    mp_image = mp.Image(
+        image_format=mp.ImageFormat.SRGB,
+        data=rgb
+    )
+
+    result = landmarker.detect_for_video(mp_image, timestamp)
+
+    if not result.face_landmarks:
         return 0, 0, False
-    pt = res.multi_face_landmarks[0].landmark[168]
+
+    pt = result.face_landmarks[0][168]
+
     return (pt.x - 0.5) * 2, (pt.y - 0.5) * 2, True
+
 
 def project(x, y, z, hx, hy, WIDTH, HEIGHT):
     d = EYE_DIST + z
@@ -42,7 +61,16 @@ def main():
     screen = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
     pygame.display.set_caption("Off-Axis Perspective")
     cap = cv2.VideoCapture(0)
-    face_mesh = mp_face.FaceMesh(max_num_faces=1)
+    
+    base_options = mptest.BaseOptions(model_asset_path="face_landmarker.task")
+
+    options = vision.FaceLandmarkerOptions(
+    base_options=base_options,
+    running_mode=vision.RunningMode.VIDEO,
+    num_faces=1
+)
+
+    face_mesh = vision.FaceLandmarker.create_from_options(options)
 
     running = True
     while running:
@@ -50,7 +78,9 @@ def main():
             if e.type == pygame.QUIT or (e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE):
                 running = False
 
-        hx, hy, ok = get_head(cap, face_mesh)
+        timestamp = int(time.time() * 1000)
+        hx, hy, ok = get_head(cap, face_mesh, timestamp)
+
         hx *= 5
         hy *= 5
 
