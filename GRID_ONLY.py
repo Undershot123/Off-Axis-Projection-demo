@@ -1,34 +1,55 @@
 import pygame
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mptest
+from mediapipe.tasks.python import vision
 import numpy as np
 import threading
 import time
 
 # =================================================================
-# 1. CONFIGURATION (Constants)
+# 1. CONFIGURATION
 # =================================================================
 WIDTH, HEIGHT = 1000, 700
 COLOR_BG = (10, 10, 20)
-NEON_BLUE = (0, 150, 255) # Grid Color
-EYE_DEPTH = 10.0          # Virtual eye-screen distance (z_0)
-UNIT_SCALE = 100          # Scale for converting 3D coordinates
+NEON_BLUE = (0, 150, 255)
+EYE_DEPTH = 10.0
+UNIT_SCALE = 100
 FPS = 60
-SENSITIVITY = 8           # Amplification of head movement
-SMOOTHING = 0.2           # Movement smoothing (0.0 for none, 1.0 for max)
-ROOM_DEPTH = 25.0         # Depth of the grid room
+SENSITIVITY = 8
+SMOOTHING = 0.2
+ROOM_DEPTH = 25.0
+MIN_DEPTH = 5.0
+MAX_DEPTH = 80.0
+MODEL_PATH = "face_landmarker.task"
 
 # =================================================================
-# 2. TRACKING ENGINE (Threading for fluid performance)
+# 2. TRACKING ENGINE (Tasks API Version)
 # =================================================================
 class HeadTracking:
     def __init__(self):
-        self.cap = cv2.VideoCapture(0) # Camera 0
-        self.mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(max_num_faces=1, refine_landmarks=False)
+        self.cap = cv2.VideoCapture(0)
+
+        if not self.cap.isOpened():
+            print("ERROR: Camera failed to open")
+            return
+
+        # MediaPipe Tasks setup
+        base_options = mptest.BaseOptions(model_asset_path=MODEL_PATH)
+
+        options = vision.FaceLandmarkerOptions(
+            base_options=base_options,
+            running_mode=vision.RunningMode.VIDEO,
+            num_faces=1
+        )
+
+        self.landmarker = vision.FaceLandmarker.create_from_options(options)
+
         self.head_x, self.head_y = 0.0, 0.0
         self.detected = False
         self.running = True
+        self.timestamp = 0
+
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
 
@@ -36,91 +57,150 @@ class HeadTracking:
         while self.running:
             success, frame = self.cap.read()
             if not success:
-                time.sleep(0.1)
+                time.sleep(0.05)
                 continue
 
             frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.face_mesh.process(rgb)
 
-            if results.multi_face_landmarks:
+            mp_image = mp.Image(
+                image_format=mp.ImageFormat.SRGB,
+                data=rgb
+            )
+
+            result = self.landmarker.detect_for_video(
+                mp_image,
+                self.timestamp
+            )
+
+            self.timestamp += 1
+
+            if result.face_landmarks:
                 self.detected = True
-                pt = results.multi_face_landmarks[0].landmark[168] # Center point of the face (Glabella)
+                pt = result.face_landmarks[0][168]
 
-                # Normalized coordinates (-1.0 to 1.0)
                 self.head_x = (pt.x - 0.5) * 2
                 self.head_y = (pt.y - 0.5) * 2
             else:
                 self.detected = False
 
-            time.sleep(1/60) # Limits camera processing rate
+            time.sleep(1/60)
 
     def stop(self):
         self.running = False
         self.cap.release()
 
+
 # =================================================================
-# 3. 3D PROJECTION AND DRAWING FUNCTIONS
+# 3. 3D PROJECTION
 # =================================================================
 class Point3D:
     def __init__(self, x, y, z):
         self.x, self.y, self.z = x, y, z
 
 def project_off_axis(p, head_x, head_y):
-    """Calculates the 2D screen position based on the 3D point and head position."""
     total_depth = EYE_DEPTH + p.z
-    if total_depth <= 0.1: return None
+    if total_depth <= 0.1:
+        return None
 
     ratio = EYE_DEPTH / total_depth
+
     screen_x_virtual = head_x + (p.x - head_x) * ratio
     screen_y_virtual = head_y + (p.y - head_y) * ratio
 
     pixel_x = int(WIDTH/2 + screen_x_virtual * UNIT_SCALE)
     pixel_y = int(HEIGHT/2 + screen_y_virtual * UNIT_SCALE)
+
     return (pixel_x, pixel_y)
 
-def draw_full_grid(surface, hx, hy):
-    """Draws the complete 3D grid (Floor, Ceiling, Walls)."""
-    w_room = 6.0; h_room = 3.5; grid_spacing = 2.0
 
-    # --- LONGITUDINAL LINES (Lines receding into the screen) ---
+def draw_full_grid(surface, hx, hy, depth):
+    w_room = 6.0
+    h_room = 3.5
+    grid_spacing = 2.0
 
-    # Floor and Ceiling
+    # Longitudinal lines
     for x in np.arange(-w_room, w_room + 0.1, grid_spacing):
-        # Floor
         p1 = project_off_axis(Point3D(x, -h_room, 0), hx, hy)
-        p2 = project_off_axis(Point3D(x, -h_room, ROOM_DEPTH), hx, hy)
+        p2 = project_off_axis(Point3D(x, -h_room, depth), hx, hy)
         if p1 and p2: pygame.draw.line(surface, NEON_BLUE, p1, p2, 1)
-        # Ceiling
+
         p3 = project_off_axis(Point3D(x, h_room, 0), hx, hy)
-        p4 = project_off_axis(Point3D(x, h_room, ROOM_DEPTH), hx, hy)
+        p4 = project_off_axis(Point3D(x, h_room, depth), hx, hy)
         if p3 and p4: pygame.draw.line(surface, NEON_BLUE, p3, p4, 1)
 
-    # Left and Right Walls
     for y in np.arange(-h_room, h_room + 0.1, grid_spacing):
-        # Left Wall
         p1 = project_off_axis(Point3D(-w_room, y, 0), hx, hy)
-        p2 = project_off_axis(Point3D(-w_room, y, ROOM_DEPTH), hx, hy)
+        p2 = project_off_axis(Point3D(-w_room, y, depth), hx, hy)
         if p1 and p2: pygame.draw.line(surface, NEON_BLUE, p1, p2, 1)
-        # Right Wall
+
         p3 = project_off_axis(Point3D(w_room, y, 0), hx, hy)
-        p4 = project_off_axis(Point3D(w_room, y, ROOM_DEPTH), hx, hy)
+        p4 = project_off_axis(Point3D(w_room, y, depth), hx, hy)
         if p3 and p4: pygame.draw.line(surface, NEON_BLUE, p3, p4, 1)
 
-    # --- TRANSVERSAL LINES (Depth slices) ---
-
-    for z in np.arange(0.0, ROOM_DEPTH + 0.1, grid_spacing):
-        # 4 corners of the "box" at this depth Z
-        tl = project_off_axis(Point3D(-w_room, h_room, z), hx, hy) # Top Left
-        tr = project_off_axis(Point3D(w_room, h_room, z), hx, hy)  # Top Right
-        br = project_off_axis(Point3D(w_room, -h_room, z), hx, hy) # Bottom Right
-        bl = project_off_axis(Point3D(-w_room, -h_room, z), hx, hy) # Bottom Left
+    # Depth slices
+    for z in np.arange(0.0, depth + 0.1, grid_spacing):
+        tl = project_off_axis(Point3D(-w_room, h_room, z), hx, hy)
+        tr = project_off_axis(Point3D(w_room, h_room, z), hx, hy)
+        br = project_off_axis(Point3D(w_room, -h_room, z), hx, hy)
+        bl = project_off_axis(Point3D(-w_room, -h_room, z), hx, hy)
 
         if tl and tr and br and bl:
-            pygame.draw.line(surface, NEON_BLUE, tl, tr, 1) # Top
-            pygame.draw.line(surface, NEON_BLUE, bl, br, 1) # Bottom
-            pygame.draw.line(surface, NEON_BLUE, tl, bl, 1) # Left
-            pygame.draw.line(surface, NEON_BLUE, tr, br, 1) # Right
+            pygame.draw.line(surface, NEON_BLUE, tl, tr, 1)
+            pygame.draw.line(surface, NEON_BLUE, bl, br, 1)
+            pygame.draw.line(surface, NEON_BLUE, tl, bl, 1)
+            pygame.draw.line(surface, NEON_BLUE, tr, br, 1)
+
+# HELPER FUNCTIONS
+def get_front_square(hx, hy):
+    """Returns projected front square corners."""
+    w_room = 6.0
+    h_room = 3.5
+
+    tl = project_off_axis(Point3D(-w_room, h_room, 0), hx, hy)
+    tr = project_off_axis(Point3D(w_room, h_room, 0), hx, hy)
+    br = project_off_axis(Point3D(w_room, -h_room, 0), hx, hy)
+    bl = project_off_axis(Point3D(-w_room, -h_room, 0), hx, hy)
+
+    return tl, tr, br, bl
+
+def point_line_distance(px, py, ax, ay, bx, by):
+    """Distance from point P to line segment AB."""
+    apx, apy = px - ax, py - ay
+    abx, aby = bx - ax, by - ay
+    ab_len_sq = abx * abx + aby * aby
+
+    if ab_len_sq == 0:
+        return ((px - ax)**2 + (py - ay)**2) ** 0.5
+
+    t = max(0, min(1, (apx * abx + apy * aby) / ab_len_sq))
+    closest_x = ax + abx * t
+    closest_y = ay + aby * t
+
+    dx = px - closest_x
+    dy = py - closest_y
+
+    return (dx * dx + dy * dy) ** 0.5
+
+def edge_under_mouse(mx, my, corners, threshold=10):
+    """Returns index of hovered edge or None."""
+    tl, tr, br, bl = corners
+
+    edges = [
+        (tl, tr),  # Top
+        (tr, br),  # Right
+        (br, bl),  # Bottom
+        (bl, tl)   # Left
+    ]
+
+    for i, (a, b) in enumerate(edges):
+        if a and b:
+            dist = point_line_distance(mx, my, a[0], a[1], b[0], b[1])
+            if dist < threshold:
+                return i
+
+    return None
+
 
 # =================================================================
 # 4. MAIN LOOP
@@ -128,9 +208,15 @@ def draw_full_grid(surface, hx, hy):
 def main():
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("3D FULL GRID PARALLAX")
+    pygame.display.set_caption("3D FULL GRID PARALLAX (Tasks API)")
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("Consolas", 24)
+    dragging = False
+    last_mouse_y = 0
+
+    room_depth = ROOM_DEPTH
+    hovered_edge = None
+    last_mouse_y = 0
 
     tracker = HeadTracking()
 
@@ -139,34 +225,116 @@ def main():
     running = True
     while running:
         clock.tick(FPS)
+
         for event in pygame.event.get():
-            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_e):
+
+            if event.type == pygame.QUIT:
                 running = False
 
-        # --- LOGIC ---
-        # 1. Read head position
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_e:
+                running = False
+
+            # --- Mouse hover detection ---
+            mx, my = pygame.mouse.get_pos()
+            corners = get_front_square(smooth_hx, smooth_hy)
+            hovered_edge = edge_under_mouse(mx, my, corners)
+
+            if hovered_edge is not None:
+                pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_SIZEALL)
+            else:
+                pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
+
+            # --- Mouse press ---
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if hovered_edge is not None:
+                    dragging = True
+                    last_mouse_y = my
+
+            # --- Mouse release ---
+            if event.type == pygame.MOUSEBUTTONUP:
+                dragging = False
+
+            # --- Drag motion ---
+            if event.type == pygame.MOUSEMOTION and dragging:
+                dy = event.rel[1]  # Use relative movement instead of recalculating
+                room_depth -= dy * 0.25
+                room_depth = max(MIN_DEPTH, min(MAX_DEPTH, room_depth))
+
+
+            # Mouse Handling
+            mx, my = pygame.mouse.get_pos()
+            corners = get_front_square(smooth_hx, smooth_hy)
+
+            hovered_edge = edge_under_mouse(mx, my, corners)
+
+            # Cursor change
+            if hovered_edge is not None:
+                pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_SIZEALL)
+            else:
+                pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
+
+            for event in pygame.event.get():
+
+                if event.type == pygame.QUIT:
+                    running = False
+
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_e:
+                    running = False
+
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if hovered_edge is not None:
+                        dragging = True
+                        last_mouse_y = my
+
+                if event.type == pygame.MOUSEBUTTONUP:
+                    dragging = False
+
+                if event.type == pygame.MOUSEMOTION and dragging:
+                    dy = my - last_mouse_y
+                    last_mouse_y = my
+
+                    room_depth -= dy * 0.25
+                    room_depth = max(MIN_DEPTH, min(MAX_DEPTH, room_depth))
+
+
+        # Read tracking
         target_hx = tracker.head_x * SENSITIVITY
         target_hy = tracker.head_y * SENSITIVITY
 
-        # 2. Apply smoothing (fluid movement)
+        # Smooth movement
         smooth_hx += (target_hx - smooth_hx) * SMOOTHING
         smooth_hy += (target_hy - smooth_hy) * SMOOTHING
 
-        # --- DRAWING ---
+        # Draw
         screen.fill(COLOR_BG)
+        draw_full_grid(screen, smooth_hx, smooth_hy, room_depth)
 
-        # Draw the complete 3D grid
-        draw_full_grid(screen, smooth_hx, smooth_hy)
 
-        # Display detection status
+        corners = get_front_square(smooth_hx, smooth_hy)
+
+        if all(corners):
+            tl, tr, br, bl = corners
+            edges = [
+                (tl, tr),
+                (tr, br),
+                (br, bl),
+                (bl, tl)
+            ]
+
+            for i, (a, b) in enumerate(edges):
+                color = (255, 255, 0) if i == hovered_edge else NEON_BLUE
+                pygame.draw.line(screen, color, a, b, 3)
+
+
         if not tracker.detected:
-            text = font.render("NOT DETECTED. Check camera (0 or 1).", True, (255, 50, 50))
+            text = font.render("NOT DETECTED. Check camera.", True, (255, 50, 50))
             screen.blit(text, (WIDTH//2 - text.get_width()//2, HEIGHT - 50))
 
         pygame.display.flip()
 
     tracker.stop()
     pygame.quit()
+
 
 if __name__ == "__main__":
     main()

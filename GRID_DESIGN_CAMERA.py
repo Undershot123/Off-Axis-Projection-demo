@@ -26,6 +26,9 @@ NEON_WHITE = (220, 255, 255)  # Bright core
 UNIT_SCALE = 100
 EYE_DEPTH = 10.0      # Virtual eye-screen distance
 ROOM_DEPTH = 30.0     # Depth of the grid room
+MIN_DEPTH = 5.0
+MAX_DEPTH = 80.0
+MODEL_PATH = "face_landmarker.task"
 
 # --- Sensitivities & Smoothing ---
 SENSITIVITY_X = 16.0
