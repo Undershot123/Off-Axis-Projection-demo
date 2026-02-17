@@ -14,8 +14,6 @@ WIDTH, HEIGHT = 1000, 700
 COLOR_BG = (10, 10, 20)
 NEON_BLUE = (0, 150, 255)
 
-UNIT_SCALE = 100
-
 # Vertical FOV control
 VERTICAL_FOV = 60.0
 MIN_FOV = 30.0
@@ -34,9 +32,9 @@ MODEL_PATH = "face_landmarker.task"
 # Slider UI
 SLIDER_WIDTH = 400
 SLIDER_HEIGHT = 8
-SLIDER_Y_OFFSET = 40
+SLIDER_Y_OFFSET = 40   # distance from bottom for the bottom slider
+SLIDER_GAP = 38        # vertical gap between stacked sliders
 KNOB_RADIUS = 10
-
 
 # =================================================================
 # 2. HEAD TRACKING (MediaPipe Tasks API)
@@ -92,7 +90,7 @@ class HeadTracking:
 
             if result.face_landmarks:
                 self.detected = True
-                pt = result.face_landmarks[0][168]  # nose tip
+                pt = result.face_landmarks[0][168]  # nose bridge / center-ish
                 self.head_x = (pt.x - 0.5) * 2
                 self.head_y = (pt.y - 0.5) * 2
             else:
@@ -114,7 +112,7 @@ class Point3D:
 
 
 def project_off_axis(p, head_x, head_y, fov):
-    # Convert FOV to focal length
+    # Convert vertical FOV to focal length (in pixels)
     f = (HEIGHT / 2) / np.tan(np.radians(fov / 2))
 
     total_depth = p.z + 0.0001
@@ -132,41 +130,41 @@ def project_off_axis(p, head_x, head_y, fov):
     return (pixel_x, pixel_y)
 
 
-def draw_full_grid(surface, hx, hy, depth):
+def draw_full_grid(surface, hx, hy, depth, fov):
     w_room = 6.0
     h_room = 3.5
     grid_spacing = 2.0
 
-    # Longitudinal lines
+    # Longitudinal lines (along Z)
     for x in np.arange(-w_room, w_room + 0.1, grid_spacing):
-        p1 = project_off_axis(Point3D(x, -h_room, 0), hx, hy)
-        p2 = project_off_axis(Point3D(x, -h_room, depth), hx, hy)
-        p3 = project_off_axis(Point3D(x, h_room, 0), hx, hy)
-        p4 = project_off_axis(Point3D(x, h_room, depth), hx, hy)
+        p1 = project_off_axis(Point3D(x, -h_room, 0), hx, hy, fov)
+        p2 = project_off_axis(Point3D(x, -h_room, depth), hx, hy, fov)
+        p3 = project_off_axis(Point3D(x, h_room, 0), hx, hy, fov)
+        p4 = project_off_axis(Point3D(x, h_room, depth), hx, hy, fov)
 
         if p1 and p2:
             pygame.draw.line(surface, NEON_BLUE, p1, p2, 1)
         if p3 and p4:
             pygame.draw.line(surface, NEON_BLUE, p3, p4, 1)
 
-    # Horizontal lines
+    # Horizontal lines (along Z)
     for y in np.arange(-h_room, h_room + 0.1, grid_spacing):
-        p1 = project_off_axis(Point3D(-w_room, y, 0), hx, hy)
-        p2 = project_off_axis(Point3D(-w_room, y, depth), hx, hy)
-        p3 = project_off_axis(Point3D(w_room, y, 0), hx, hy)
-        p4 = project_off_axis(Point3D(w_room, y, depth), hx, hy)
+        p1 = project_off_axis(Point3D(-w_room, y, 0), hx, hy, fov)
+        p2 = project_off_axis(Point3D(-w_room, y, depth), hx, hy, fov)
+        p3 = project_off_axis(Point3D(w_room, y, 0), hx, hy, fov)
+        p4 = project_off_axis(Point3D(w_room, y, depth), hx, hy, fov)
 
         if p1 and p2:
             pygame.draw.line(surface, NEON_BLUE, p1, p2, 1)
         if p3 and p4:
             pygame.draw.line(surface, NEON_BLUE, p3, p4, 1)
 
-    # Depth slices
+    # Depth slices (rectangles)
     for z in np.arange(0.0, depth + 0.1, grid_spacing):
-        tl = project_off_axis(Point3D(-w_room, h_room, z), hx, hy)
-        tr = project_off_axis(Point3D(w_room, h_room, z), hx, hy)
-        br = project_off_axis(Point3D(w_room, -h_room, z), hx, hy)
-        bl = project_off_axis(Point3D(-w_room, -h_room, z), hx, hy)
+        tl = project_off_axis(Point3D(-w_room, h_room, z), hx, hy, fov)
+        tr = project_off_axis(Point3D(w_room, h_room, z), hx, hy, fov)
+        br = project_off_axis(Point3D(w_room, -h_room, z), hx, hy, fov)
+        bl = project_off_axis(Point3D(-w_room, -h_room, z), hx, hy, fov)
 
         if tl and tr and br and bl:
             pygame.draw.line(surface, NEON_BLUE, tl, tr, 1)
@@ -176,14 +174,17 @@ def draw_full_grid(surface, hx, hy, depth):
 
 
 # =================================================================
-# 4. SLIDER UI
+# 4. SLIDER UI (STACKED: FOV + DEPTH)
 # =================================================================
-def draw_slider(surface, depth):
-    slider_x = WIDTH // 2 - SLIDER_WIDTH // 2
-    slider_y = HEIGHT - SLIDER_Y_OFFSET
+def _clamp01(t):
+    return max(0.0, min(1.0, t))
 
-    t = (depth - MIN_DEPTH) / (MAX_DEPTH - MIN_DEPTH)
-    t = max(0.0, min(1.0, t))
+
+def draw_slider(surface, value, vmin, vmax, slider_y):
+    slider_x = WIDTH // 2 - SLIDER_WIDTH // 2
+
+    t = (value - vmin) / float(vmax - vmin)
+    t = _clamp01(t)
 
     knob_x = slider_x + int(t * SLIDER_WIDTH)
     knob_y = slider_y
@@ -199,7 +200,20 @@ def draw_slider(surface, depth):
     pygame.draw.circle(surface, (255, 255, 255),
                        (knob_x, knob_y), KNOB_RADIUS)
 
-    return slider_x, knob_x
+    return slider_x, knob_x, slider_y
+
+
+def point_on_knob(mx, my, knob_x, knob_y):
+    dx = mx - knob_x
+    dy = my - knob_y
+    return (dx*dx + dy*dy) <= (KNOB_RADIUS * KNOB_RADIUS)
+
+
+def value_from_mouse_x(mx, vmin, vmax):
+    slider_x = WIDTH // 2 - SLIDER_WIDTH // 2
+    t = (mx - slider_x) / float(SLIDER_WIDTH)
+    t = _clamp01(t)
+    return vmin + t * (vmax - vmin)
 
 
 # =================================================================
@@ -216,11 +230,18 @@ def main():
 
     smooth_hx, smooth_hy = 0.0, 0.0
     room_depth = ROOM_DEPTH
-    dragging_slider = False
+    vertical_fov = VERTICAL_FOV
+
+    dragging_depth = False
+    dragging_fov = False
 
     running = True
     while running:
         clock.tick(FPS)
+
+        # Slider Y positions (stacked)
+        depth_slider_y = HEIGHT - SLIDER_Y_OFFSET
+        fov_slider_y = depth_slider_y - SLIDER_GAP
 
         for event in pygame.event.get():
 
@@ -232,19 +253,30 @@ def main():
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = pygame.mouse.get_pos()
-                slider_x, knob_x = draw_slider(screen, room_depth)
-                if abs(mx - knob_x) <= KNOB_RADIUS:
-                    dragging_slider = True
+
+                # Draw once to get knob positions for hit testing
+                _, depth_knob_x, depth_knob_y = draw_slider(screen, room_depth, MIN_DEPTH, MAX_DEPTH, depth_slider_y)
+                _, fov_knob_x, fov_knob_y = draw_slider(screen, vertical_fov, MIN_FOV, MAX_FOV, fov_slider_y)
+
+                if point_on_knob(mx, my, depth_knob_x, depth_knob_y):
+                    dragging_depth = True
+                    dragging_fov = False
+                elif point_on_knob(mx, my, fov_knob_x, fov_knob_y):
+                    dragging_fov = True
+                    dragging_depth = False
 
             if event.type == pygame.MOUSEBUTTONUP:
-                dragging_slider = False
+                dragging_depth = False
+                dragging_fov = False
 
-            if event.type == pygame.MOUSEMOTION and dragging_slider:
-                mx, _ = pygame.mouse.get_pos()
-                slider_x = WIDTH // 2 - SLIDER_WIDTH // 2
-                t = (mx - slider_x) / SLIDER_WIDTH
-                t = max(0.0, min(1.0, t))
-                room_depth = MIN_DEPTH + t * (MAX_DEPTH - MIN_DEPTH)
+            if event.type == pygame.MOUSEMOTION:
+                mx, my = pygame.mouse.get_pos()
+
+                if dragging_depth:
+                    room_depth = value_from_mouse_x(mx, MIN_DEPTH, MAX_DEPTH)
+
+                if dragging_fov:
+                    vertical_fov = value_from_mouse_x(mx, MIN_FOV, MAX_FOV)
 
         # Smooth tracking
         target_hx = tracker.head_x * SENSITIVITY
@@ -253,16 +285,20 @@ def main():
         smooth_hx += (target_hx - smooth_hx) * SMOOTHING
         smooth_hy += (target_hy - smooth_hy) * SMOOTHING
 
-        # Draw
+        # Draw scene
         screen.fill(COLOR_BG)
-        draw_full_grid(screen, smooth_hx, smooth_hy, room_depth)
+        draw_full_grid(screen, smooth_hx, smooth_hy, room_depth, vertical_fov)
 
-        # Draw slider
-        draw_slider(screen, room_depth)
+        # Draw sliders (FOV above Depth)
+        draw_slider(screen, vertical_fov, MIN_FOV, MAX_FOV, fov_slider_y)
+        draw_slider(screen, room_depth, MIN_DEPTH, MAX_DEPTH, depth_slider_y)
 
-        # Depth display text
+        # Labels
+        fov_text = font.render(f"Vertical FOV: {vertical_fov:.1f}", True, (200, 200, 200))
+        screen.blit(fov_text, (WIDTH // 2 - fov_text.get_width() // 2, fov_slider_y - 30))
+
         depth_text = font.render(f"Depth: {room_depth:.1f}", True, (200, 200, 200))
-        screen.blit(depth_text, (WIDTH // 2 - depth_text.get_width() // 2, HEIGHT - 80))
+        screen.blit(depth_text, (WIDTH // 2 - depth_text.get_width() // 2, depth_slider_y - 30))
 
         if not tracker.detected:
             text = font.render("NOT DETECTED. Check camera.", True, (255, 50, 50))
