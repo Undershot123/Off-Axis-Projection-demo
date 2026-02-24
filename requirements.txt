@@ -1,0 +1,8 @@
+pygame==2.6.1
+opencv-python
+mediapipe==0.10.32
+numpy
+mss
+pywin32
+moderngl
+PyGLM
