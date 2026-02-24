@@ -116,10 +116,10 @@ def main():
         # ----------------------------------------------------------------
         screen.fill(config.COLOR_BG)
 
-        face_mapper.draw_faces(screen, smooth_hx, smooth_hy, room_depth, vertical_fov)
+        face_mapper.draw_faces(screen, smooth_hx, -smooth_hy, room_depth, vertical_fov)
 
         if panel_ui.show_wireframe:
-            draw_full_grid(screen, smooth_hx, smooth_hy, room_depth, vertical_fov)
+            draw_full_grid(screen, smooth_hx, -smooth_hy, room_depth, vertical_fov)
 
         panel_ui.draw(screen, font)
 
