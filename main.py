@@ -17,12 +17,12 @@ COLOR_BG = (10, 10, 20)
 NEON_BLUE = (0, 150, 255)
 
 # Vertical FOV control
-VERTICAL_FOV = 150.0
+VERTICAL_FOV = 165.0
 MIN_FOV = 150.0
 MAX_FOV = 170.0
 
 FPS = 60
-SENSITIVITY = 8
+SENSITIVITY = 20
 SMOOTHING = 0.2
 
 ROOM_DEPTH = 50.0
@@ -85,7 +85,7 @@ class HeadTracking:
                 time.sleep(0.05)
                 continue
 
-            frame = cv2.flip(frame, 1)
+            #frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             mp_image = mp.Image(
@@ -291,8 +291,8 @@ _FACE_SRC_PTS = {
     "back":   lambda w, h: np.float32([[0,h],[w,h],[w,0],[0,0]]),  # vertical flip
     "top":    lambda w, h: np.float32([[0,h],[w,h],[w,0],[0,0]]),  # vertical flip
     "bottom": lambda w, h: np.float32([[0,h],[w,h],[w,0],[0,0]]),  # vertical flip
-    "left":   lambda w, h: np.float32([[0,0],[0,h],[w,h],[w,0]]),  # 90° rotation
-    "right":  lambda w, h: np.float32([[0,0],[0,h],[w,h],[w,0]]),  # 90° rotation
+    "left":   lambda w, h: np.float32([[0,h],[0,0],[w,0],[w,h]]),  # 90° rotation + vertical flip
+    "right":  lambda w, h: np.float32([[w,h],[w,0],[0,0],[0,h]]),  # 90° rotation + vertical flip
 }
 
 
@@ -376,7 +376,8 @@ class WindowPanelUI:
         self.hovered_face  = None
         self.scroll_offset  = 0
         self._rect          = pygame.Rect(0, 0, PANEL_W, 0)
-        self.show_wireframe = True
+        self.show_wireframe   = True
+        self.show_perspective = True
 
     def toggle(self):
         self.visible = not self.visible
@@ -413,6 +414,14 @@ class WindowPanelUI:
             PANEL_ROW_H - 2
         )
 
+    def _perspective_toggle_rect(self):
+        return pygame.Rect(
+            WIDTH - PANEL_W + PANEL_PADDING,
+            HEIGHT - PANEL_ROW_H * 3 - PANEL_PADDING - 100,
+            PANEL_W - PANEL_PADDING * 2,
+            PANEL_ROW_H - 2
+        )
+
     def _wireframe_toggle_rect(self):
         return pygame.Rect(
             WIDTH - PANEL_W + PANEL_PADDING,
@@ -431,6 +440,9 @@ class WindowPanelUI:
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
+            if self._perspective_toggle_rect().collidepoint(mx, my):
+                self.show_perspective = not self.show_perspective
+                return self.hovered_face
             if self._wireframe_toggle_rect().collidepoint(mx, my):
                 self.show_wireframe = not self.show_wireframe
                 return self.hovered_face
@@ -523,8 +535,8 @@ class WindowPanelUI:
         clear_col = (255, 100, 100) if (is_clear_hover and self.face_pending) else (80, 80, 80)
         surface.blit(font.render("[ Clear ]", True, clear_col), (cr.x, cr.y + 4))
 
-        vis       = self.window_list[self.scroll_offset:
-                                     self.scroll_offset + self._visible_rows()]
+        vis = self.window_list[self.scroll_offset:
+        self.scroll_offset + self._visible_rows()]
         for j, (hwnd, title) in enumerate(vis):
             y     = 36 + PANEL_ROW_H + j * PANEL_ROW_H   # offset for Clear row
             short = title[:max_chars] + ".." if len(title) > max_chars else title
@@ -533,11 +545,19 @@ class WindowPanelUI:
             surface.blit(font.render(short, True, col), (win_x, y + 4))
 
         # ── Tools section ──
-        tools_label_y = HEIGHT - PANEL_ROW_H * 3 - PANEL_PADDING * 2 - 100
+        tools_label_y = HEIGHT - PANEL_ROW_H * 4 - PANEL_PADDING * 2 - 100
         surface.blit(
             font.render("── Tools ──", True, (0, 150, 255)),
             (WIDTH - PANEL_W + PANEL_PADDING, tools_label_y)
         )
+        pr = self._perspective_toggle_rect()
+        p_hover    = pr.collidepoint(pygame.mouse.get_pos())
+        p_text     = "[x] Perspective" if self.show_perspective else "[ ] Perspective"
+        p_col      = (0, 230, 100) if self.show_perspective else (160, 160, 160)
+        if p_hover:
+            p_col = (255, 255, 100)
+        surface.blit(font.render(p_text, True, p_col), (pr.x, pr.y + 4))
+
         wr = self._wireframe_toggle_rect()
         wf_hover   = wr.collidepoint(pygame.mouse.get_pos())
         label_text = "[x] Wireframe" if self.show_wireframe else "[ ] Wireframe"
@@ -633,7 +653,7 @@ def main():
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("Consolas", 22)
 
-    tracker    = HeadTracking()
+    tracker     = HeadTracking()
     face_mapper = FaceMapper()
     panel_ui    = WindowPanelUI(face_mapper)
 
@@ -674,14 +694,20 @@ def main():
 
                 # Draw once to get knob positions for hit testing
                 _, depth_knob_x, depth_knob_y = draw_slider(screen, room_depth, MIN_DEPTH, MAX_DEPTH, depth_slider_y)
-                _, fov_knob_x, fov_knob_y = draw_slider(screen, vertical_fov, MIN_FOV, MAX_FOV, fov_slider_y)
 
                 if point_on_knob(mx, my, depth_knob_x, depth_knob_y):
                     dragging_depth = True
                     dragging_fov = False
-                elif point_on_knob(mx, my, fov_knob_x, fov_knob_y):
-                    dragging_fov = True
-                    dragging_depth = False
+                elif panel_ui.show_perspective:
+                    _, fov_knob_x, fov_knob_y = draw_slider(screen, vertical_fov, MIN_FOV, MAX_FOV, fov_slider_y)
+                    if point_on_knob(mx, my, fov_knob_x, fov_knob_y):
+                        dragging_fov = True
+                        dragging_depth = False
+                    elif reset_btn_rect.collidepoint(mx, my):
+                        # Store current face position as the new center
+                        calib_x = tracker.head_x
+                        calib_y = tracker.head_y
+                        smooth_hx, smooth_hy = 0.0, 0.0
                 elif reset_btn_rect.collidepoint(mx, my):
                     # Store current face position as the new center
                     calib_x = tracker.head_x
@@ -720,18 +746,21 @@ def main():
         panel_ui.draw(screen, font)
 
         # Draw sliders (FOV above Depth)
-        draw_slider(screen, vertical_fov, MIN_FOV, MAX_FOV, fov_slider_y)
-        draw_slider(screen, room_depth, MIN_DEPTH, MAX_DEPTH, depth_slider_y)
+        if panel_ui.show_perspective:
+            draw_slider(screen, vertical_fov, MIN_FOV, MAX_FOV, fov_slider_y)
+            draw_slider(screen, room_depth, MIN_DEPTH, MAX_DEPTH, depth_slider_y)
 
         # Draw reset button and store its rect for hit testing
-        reset_btn_rect = draw_reset_button(screen, font)
+        if panel_ui.show_perspective:
+            reset_btn_rect = draw_reset_button(screen, font)
 
         # Labels
-        fov_text = font.render(f"Vertical FOV: {vertical_fov:.1f}", True, (200, 200, 200))
-        screen.blit(fov_text, (WIDTH // 2 - fov_text.get_width() // 2, fov_slider_y - 30))
+        if panel_ui.show_perspective:
+            fov_text = font.render(f"Vertical FOV: {vertical_fov:.1f}", True, (200, 200, 200))
+            screen.blit(fov_text, (WIDTH // 2 - fov_text.get_width() // 2, fov_slider_y - 30))
 
-        depth_text = font.render(f"Depth: {room_depth:.1f}", True, (200, 200, 200))
-        screen.blit(depth_text, (WIDTH // 2 - depth_text.get_width() // 2, depth_slider_y - 30))
+            depth_text = font.render(f"Depth: {room_depth:.1f}", True, (200, 200, 200))
+            screen.blit(depth_text, (WIDTH // 2 - depth_text.get_width() // 2, depth_slider_y - 30))
 
         if not tracker.detected:
             text = font.render("NOT DETECTED. Check camera.", True, (255, 50, 50))
